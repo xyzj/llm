@@ -15,7 +15,7 @@ A Go package for managing multiple concurrent chat sessions with Large Language 
 ## Installation
 
 ```bash
-go get 192.168.51.60/llm
+go get github.com/xyzj/llm
 ```
 
 ## Quick Start
@@ -24,7 +24,7 @@ go get 192.168.51.60/llm
 package main
 
 import (
-    "192.168.51.60/llm"
+    "github.com/xyzj/llm"
     "time"
 )
 
