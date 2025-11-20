@@ -8,7 +8,6 @@ import (
 
 	"github.com/xyzj/llm/storage"
 
-	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
 	"github.com/xyzj/toolbox/logger"
 )
 
@@ -17,28 +16,17 @@ type (
 	// These options control various aspects of chat behavior including
 	// storage, model selection, API authentication, and chat lifecycle management.
 	Opt struct {
-		dataStorage  storage.Storage                // Storage backend for persisting chat history
-		chatLifeTime time.Duration                  // Maximum idle time before a chat session expires
-		logg         logger.Logger                  // Logger instance for debugging and monitoring
-		roleSystem   []*model.ChatCompletionMessage // System role message template
-		baseURI      string                         // Base URI for the LLM service endpoint
-		modelName    string                         // Name of the AI model to use for chat completions
-		apiKey       string                         // API key for authenticating with the LLM service
-		maxHistory   int                            // Maximum number of messages to retain in chat history
+		dataStorage  storage.Storage // Storage backend for persisting chat history
+		chatLifeTime time.Duration   // Maximum idle time before a chat session expires
+		logg         logger.Logger   // Logger instance for debugging and monitoring
+		baseURI      string          // Base URI for the LLM service endpoint
+		modelName    string          // Name of the AI model to use for chat completions
+		apiKey       string          // API key for authenticating with the LLM service
+		maxHistory   int             // Maximum number of messages to retain in chat history
 	}
 	// Opts is a function type for configuring ChatsManager options.
 	Opts func(opt *Opt)
 )
-
-// WithRoleSystem configures the Opt to use the given system role messages.
-// The provided messages replace any existing roleSystem messages on the Opt.
-// Passing zero messages clears the roleSystem (sets it to nil). The returned
-// Opts function applies this configuration to the target *Opt.
-func WithRoleSystem(msg ...*model.ChatCompletionMessage) Opts {
-	return func(opt *Opt) {
-		opt.roleSystem = msg
-	}
-}
 
 // WithMaxHistory sets the maximum number of messages to keep in each chat's history.
 // When this limit is exceeded, older messages are automatically removed to prevent

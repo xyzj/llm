@@ -10,6 +10,7 @@ package mcpcli
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/mark3labs/mcp-go/client"
@@ -34,6 +35,37 @@ func WithTimeout(t time.Duration) Opts {
 	}
 }
 
+type customTool struct {
+	locker sync.RWMutex
+	data   map[string]func(*model.ToolCall) (*model.ChatCompletionMessage, error)
+}
+
+func (ct *customTool) Store(name string, f func(tc *model.ToolCall) (*model.ChatCompletionMessage, error)) {
+	ct.locker.Lock()
+	ct.data[name] = f
+	ct.locker.Unlock()
+}
+
+func (ct *customTool) Delete(name string) {
+	ct.locker.Lock()
+	delete(ct.data, name)
+	ct.locker.Unlock()
+}
+func (ct *customTool) Load(name string) (func(tc *model.ToolCall) (*model.ChatCompletionMessage, error), bool) {
+	ct.locker.RLock()
+	if f, ok := ct.data[name]; ok {
+		ct.locker.RUnlock()
+		return f, ok
+	}
+	ct.locker.RUnlock()
+	return nil, false
+}
+func (ct *customTool) Len() int {
+	ct.locker.RLock()
+	defer ct.locker.RUnlock()
+	return len(ct.data)
+}
+
 // New creates a new McpClient instance for managing MCP server connections and tools.
 // The client can connect to multiple MCP servers and aggregate their tools into
 // a unified interface for AI models to use.
@@ -43,6 +75,10 @@ func New() *McpClient {
 	return &McpClient{
 		clis:  make(map[string]*mclient),
 		tools: mapfx.NewUniqueSlice[*model.Tool](),
+		customTool: &customTool{
+			locker: sync.RWMutex{},
+			data:   make(map[string]func(*model.ToolCall) (*model.ChatCompletionMessage, error)),
+		},
 	}
 }
 
@@ -63,9 +99,10 @@ type mclient struct {
 //   - Deduplication of tools across servers
 //   - Connection lifecycle management with timeouts
 type McpClient struct {
-	clis  map[string]*mclient             // Map of MCP server connections (keyed by SHA1 hash of URI)
-	idx   map[string]string               // Tool name to server key mapping for routing
-	tools *mapfx.UniqueSlice[*model.Tool] // Deduplicated collection of available tools
+	clis       map[string]*mclient             // Map of MCP server connections (keyed by SHA1 hash of URI)
+	idx        map[string]string               // Tool name to server key mapping for routing
+	tools      *mapfx.UniqueSlice[*model.Tool] // Deduplicated collection of available tools
+	customTool *customTool
 }
 
 // Call executes a tool call through the appropriate MCP server and returns the result
@@ -85,6 +122,9 @@ type McpClient struct {
 //   - *model.ChatCompletionMessage: Formatted tool result message
 //   - error: Any error during argument parsing, routing, or execution
 func (m *McpClient) Call(tc *model.ToolCall, opts ...Opts) (*model.ChatCompletionMessage, error) {
+	if f, ok := m.customTool.Load(tc.Function.Name); ok {
+		return f(tc)
+	}
 	co := Opt{
 		timeout: 60 * time.Second,
 	}
@@ -126,7 +166,7 @@ func (m *McpClient) ToolCount() int {
 	return m.tools.Len()
 }
 
-// AddTools connects to an MCP server at the specified URI and loads its available tools.
+// AddMCPTools connects to an MCP server at the specified URI and loads its available tools.
 // The tools are automatically integrated into the client's unified tool collection.
 // Empty URIs are ignored without error.
 //
@@ -135,12 +175,17 @@ func (m *McpClient) ToolCount() int {
 //
 // Returns:
 //   - error: Any error encountered during connection or tool loading
-func (m *McpClient) AddTools(mcpUri string) error {
+func (m *McpClient) AddMCPTools(mcpUri string) error {
 	if mcpUri == "" {
 		return nil
 	}
-	_, err := m.loadTools(mcpUri)
+	_, err := m.loadMCPTools(mcpUri)
 	return err
+}
+
+func (m *McpClient) AddCustomTool(tool *model.Tool, f func(tc *model.ToolCall) (*model.ChatCompletionMessage, error)) {
+	m.tools.Store(tool)
+	m.customTool.Store(tool.Function.Name, f)
 }
 
 // ReloadTools refreshes the tool list from all connected MCP servers.
@@ -150,14 +195,14 @@ func (m *McpClient) AddTools(mcpUri string) error {
 // Returns:
 //   - []*model.Tool: Updated list of all available tools
 //   - error: Any error encountered during tool reloading (individual server failures are ignored)
-func (m *McpClient) ReloadTools() ([]*model.Tool, error) {
+func (m *McpClient) ReloadMCPTools() ([]*model.Tool, error) {
 	if m.tools != nil {
 		m.tools.Clear()
 	} else {
 		m.tools = mapfx.NewUniqueSlice[*model.Tool]()
 	}
 	for _, cli := range m.clis {
-		mt, err := m.loadTools(cli.uri)
+		mt, err := m.loadMCPTools(cli.uri)
 		if err == nil {
 			m.tools.StoreMany(mt...)
 		}
@@ -181,7 +226,7 @@ func (m *McpClient) ReloadTools() ([]*model.Tool, error) {
 // Returns:
 //   - []*model.Tool: List of tools loaded from the server
 //   - error: Any error during connection, initialization, or tool loading
-func (m *McpClient) loadTools(mcpUri string) ([]*model.Tool, error) {
+func (m *McpClient) loadMCPTools(mcpUri string) ([]*model.Tool, error) {
 	var err error
 	clikey := crypto.GetSHA1(mcpUri)
 	cli, ok := m.clis[clikey]

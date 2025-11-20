@@ -59,6 +59,9 @@ func WithAPIKey(k string) ChatOpts {
 // Multiple system messages can be provided and will be prepended to the conversation.
 func WithRoleSystem(msg ...*model.ChatCompletionMessage) Opts {
 	return func(opt *Opt) {
+		if len(msg) == 0 {
+			return
+		}
 		opt.roleSystem = msg
 	}
 }
@@ -199,6 +202,9 @@ func (c *Chat) Chat(message string, opts ...Opts) (map[string]*model.ToolCall, e
 	for _, o := range opts {
 		o(co)
 	}
+	if len(co.roleSystem) > 0 {
+		c.history.StoreMany(co.roleSystem...)
+	}
 	if len(message) > 0 {
 		c.history.Store(&model.ChatCompletionMessage{
 			Role: model.ChatMessageRoleUser,
@@ -209,12 +215,8 @@ func (c *Chat) Chat(message string, opts ...Opts) (map[string]*model.ToolCall, e
 	}
 	msgs := make([]*model.ChatCompletionMessage, 0, c.history.Len()+len(co.toolcalled)+1)
 	req := model.CreateChatCompletionRequest{
-		Model: co.model,
-		// Messages: c.history.Slice(),
+		Model:  co.model,
 		Stream: &co.stream,
-	}
-	if len(co.roleSystem) > 0 {
-		msgs = append(msgs, co.roleSystem...)
 	}
 	if len(co.toolcalled) > 0 {
 		c.history.StoreMany(co.toolcalled...)

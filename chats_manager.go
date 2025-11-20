@@ -13,6 +13,7 @@ import (
 	"github.com/xyzj/llm/storage"
 
 	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
+	"github.com/volcengine/volcengine-go-sdk/volcengine"
 	"github.com/xyzj/toolbox/crypto"
 	"github.com/xyzj/toolbox/logger"
 	"github.com/xyzj/toolbox/loopfunc"
@@ -51,7 +52,6 @@ func NewChatsManager(opts ...Opts) *ChatsManager {
 		chatLifeTime: 7 * 24 * time.Hour,
 		maxHistory:   500,
 		dataStorage:  storage.NewMemoryStorage(),
-		roleSystem:   make([]*model.ChatCompletionMessage, 0),
 		logg:         logger.NewNilLogger(),
 	}
 	for _, o := range opts {
@@ -109,12 +109,18 @@ type ChatsManager struct {
 //   - "tcp://localhost:8080"
 func (cm *ChatsManager) InitMcp(mcpuri ...string) {
 	for _, u := range mcpuri {
-		err := cm.mcpCli.AddTools(u)
+		err := cm.mcpCli.AddMCPTools(u)
 		if err != nil {
 			cm.cnf.logg.Error(fmt.Sprintf("init mcp client [%s] error: %v", u, err))
 			continue
 		}
 	}
+}
+func (cm *ChatsManager) AddCustomTool(tool *model.Tool, f func(args *model.ToolCall) (*model.ChatCompletionMessage, error)) {
+	if cm.mcpCli == nil {
+		return
+	}
+	cm.mcpCli.AddCustomTool(tool, f)
 }
 
 // History retrieves the conversation history for a specific chat session.
@@ -153,7 +159,7 @@ func (cm *ChatsManager) History(id string) []*model.ChatCompletionMessage {
 //   - Errors are logged but don't propagate to prevent cascading failures
 //   - Failed tool calls are logged and skipped, allowing conversation to continue
 //   - Chat session remains valid even if individual operations fail
-func (cm *ChatsManager) Chat(id, message string, w func(data []byte) error) {
+func (cm *ChatsManager) Chat(id, message string, w func(data []byte) error, sysmessage ...string) {
 	keyid := crypto.GetSHA1(id)
 	var ok bool
 	var ch *chat.Chat
@@ -173,11 +179,24 @@ func (cm *ChatsManager) Chat(id, message string, w func(data []byte) error) {
 		}
 		cm.chats.Store(id, ch)
 	}
+	var sysmsg []*model.ChatCompletionMessage
+	if len(sysmessage) > 0 {
+		sysmsg = make([]*model.ChatCompletionMessage, 0, len(sysmessage))
+		for _, msg := range sysmessage {
+			sysmsg = append(sysmsg, &model.ChatCompletionMessage{
+				Role: model.ChatMessageRoleSystem,
+				Content: &model.ChatCompletionMessageContent{
+					StringValue: volcengine.String(msg),
+				},
+			})
+		}
+	}
 	// Send message to AI model with available tools
 	toolcall, err := ch.Chat(message,
 		chat.WithTools(cm.mcpCli.Tools()),
 		chat.WithWriteFunc(w),
 		chat.WithStream(cm.mcpCli.ToolCount() == 0), // enable streaming if tools are not available
+		chat.WithRoleSystem(sysmsg...),
 	)
 	if err != nil {
 		cm.cnf.logg.Error(fmt.Sprintf(chatErrorFmt, ch.ID(), err))
@@ -220,7 +239,6 @@ func (cm *ChatsManager) Chat(id, message string, w func(data []byte) error) {
 				chat.WithToolCalled(msgs),
 				chat.WithStream(true),
 				chat.WithWriteFunc(w),
-				chat.WithRoleSystem(cm.cnf.roleSystem...),
 			)
 			if err != nil {
 				cm.cnf.logg.Error(fmt.Sprintf(chatErrorFmt, ch.ID(), err))
