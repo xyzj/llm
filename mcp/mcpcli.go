@@ -231,7 +231,11 @@ func (m *McpClient) loadMCPTools(mcpUri string) ([]*model.Tool, error) {
 	clikey := crypto.GetSHA1(mcpUri)
 	cli, ok := m.clis[clikey]
 	if !ok {
-		cli.cli, err = client.NewSSEMCPClient(cli.uri)
+		cli = &mclient{
+			uri: mcpUri,
+			cli: &client.Client{},
+		}
+		cli.cli, err = client.NewSSEMCPClient(mcpUri)
 		if err != nil {
 			return nil, err
 		}
