@@ -205,7 +205,6 @@ func (cm *ChatsManager) Chat(id, message string, w func(data []byte) error, sysm
 	// Process any tool calls made by the model
 	if l := len(toolcall); l > 0 {
 		wg := sync.WaitGroup{}
-		wg.Add(l)
 		msgs := make([]*model.ChatCompletionMessage, 0)
 		chanMsgs := make(chan *model.ChatCompletionMessage, l)
 		ctxdone, cancel := context.WithCancel(context.Background())
