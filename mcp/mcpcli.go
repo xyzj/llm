@@ -239,6 +239,10 @@ func (m *McpClient) loadMCPTools(mcpUri string) ([]*model.Tool, error) {
 		if err != nil {
 			return nil, err
 		}
+		err = cli.cli.Start(context.TODO())
+		if err != nil {
+			return nil, err
+		}
 		// Initialize MCP connection with protocol negotiation
 		initRequest := mcp.InitializeRequest{}
 		initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
