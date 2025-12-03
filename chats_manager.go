@@ -109,6 +109,9 @@ type ChatsManager struct {
 //   - "tcp://localhost:8080"
 func (cm *ChatsManager) InitMcp(mcpuri ...string) {
 	for _, u := range mcpuri {
+		if len(u) == 0 {
+			continue
+		}
 		err := cm.mcpCli.AddMCPTools(u)
 		if err != nil {
 			cm.cnf.logg.Error(fmt.Sprintf("init mcp client [%s] error: %v", u, err))

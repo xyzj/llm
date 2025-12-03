@@ -74,6 +74,7 @@ func (ct *customTool) Len() int {
 func New() *McpClient {
 	return &McpClient{
 		clis:  make(map[string]*mclient),
+		idx:   make(map[string]string),
 		tools: mapfx.NewUniqueSlice[*model.Tool](),
 		customTool: &customTool{
 			locker: sync.RWMutex{},
