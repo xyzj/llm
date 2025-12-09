@@ -43,6 +43,13 @@ func (s *RedisStorage) Clear() error {
 	return s.db.Del(ctx, chatHistoryPrefix+s.cnf.historySuffix).Err()
 }
 
+// Delete removes the chat history for a given chat ID from Redis storage.
+func (s *RedisStorage) Delete(chatid string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*3)
+	defer cancel()
+	return s.db.HDel(ctx, s.historyKey, chatid).Err()
+}
+
 // Load retrieves the chat history for a given chat ID from Redis storage.
 // It fetches the serialized message history from a Redis hash and deserializes
 // it into a slice of ChatCompletionMessage pointers.

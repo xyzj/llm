@@ -26,14 +26,15 @@ type (
 		writeFunc  func(data []byte) error        // Function to write streaming response data
 		model      string                         // Model name to use for this specific request
 		stream     bool                           // Whether to use streaming response
+		raw        bool
 	}
 	// Opts is a function type for configuring chat request options.
 	Opts func(opt *Opt)
 
 	// ChatOpt contains configuration options for creating a new Chat instance.
 	ChatOpt struct {
-		maxhistory int    // Maximum number of messages to keep in history
 		apikey     string // API key for VolcEngine ARK runtime
+		maxhistory int    // Maximum number of messages to keep in history
 	}
 	// ChatOpts is a function type for configuring Chat creation options.
 	ChatOpts func(opt *ChatOpt)
@@ -51,6 +52,16 @@ func WithMaxHistory(n int) ChatOpts {
 func WithAPIKey(k string) ChatOpts {
 	return func(opt *ChatOpt) {
 		opt.apikey = k
+	}
+}
+
+// WithRawData returns an Opts option that sets whether raw data handling is enabled.
+// When b is true, the option will set the target *Opt's raw field to true so raw
+// payloads are preserved/used; when false, raw handling is disabled. The returned
+// function mutates the provided *Opt by updating its raw flag.
+func WithRawData(b bool) Opts {
+	return func(opt *Opt) {
+		opt.raw = b
 	}
 }
 
@@ -139,10 +150,11 @@ type Chat struct {
 	locker      sync.Mutex         // Mutex for thread-safe operations
 	history     history.History    // Conversation history manager
 	cli         *arkruntime.Client // VolcEngine ARK runtime client
-	lastMessage time.Time          // Timestamp of the last message sent or received
-	apikey      string             // API key for authentication
-	model       string             // Default model name for this chat session
-	id          string             // Unique identifier for this chat session
+	cnf         *Opt
+	lastMessage time.Time // Timestamp of the last message sent or received
+	apikey      string    // API key for authentication
+	model       string    // Default model name for this chat session
+	id          string    // Unique identifier for this chat session
 }
 
 // ID returns the unique identifier of this chat session.
@@ -167,6 +179,11 @@ func (c *Chat) History() []*model.ChatCompletionMessage {
 // initializing a chat with predefined context.
 func (c *Chat) SetHistory(h []*model.ChatCompletionMessage) {
 	c.history.StoreMany(h...)
+}
+
+// Clear removes all messages from the conversation history, effectively resetting the chat session.
+func (c *Chat) Clear() {
+	c.history.Clear()
 }
 
 // Chat sends a message to the AI model and returns any tool calls made by the model.
@@ -202,6 +219,7 @@ func (c *Chat) Chat(message string, opts ...Opts) (map[string]*model.ToolCall, e
 	for _, o := range opts {
 		o(co)
 	}
+	c.cnf = co
 	if len(co.roleSystem) > 0 {
 		c.history.StoreMany(co.roleSystem...)
 	}
@@ -265,16 +283,22 @@ func (c *Chat) doStream(req model.CreateChatCompletionRequest, w func(data []byt
 			}
 			return nil, err
 		}
-		if len(recv.Choices) > 0 {
-			if recv.Choices[0].Delta.Role == model.ChatMessageRoleAssistant && recv.Choices[0].Delta.Content != "" {
-				err = w([]byte(recv.Choices[0].Delta.Content))
-				if err != nil {
-					return nil, err
-				}
-				message.WriteString(recv.Choices[0].Delta.Content)
+		for _, rcv := range recv.Choices {
+			if c.cnf.raw {
+				s, _ := json.Marshal(rcv)
+				w(s)
 			}
-			if len(recv.Choices[0].Delta.ToolCalls) > 0 {
-				for _, tc := range recv.Choices[0].Delta.ToolCalls {
+			if rcv.Delta.Role == model.ChatMessageRoleAssistant && rcv.Delta.Content != "" {
+				if !c.cnf.raw {
+					err = w([]byte(rcv.Delta.Content))
+					if err != nil {
+						return nil, err
+					}
+				}
+				message.WriteString(rcv.Delta.Content)
+			}
+			if len(rcv.Delta.ToolCalls) > 0 {
+				for _, tc := range rcv.Delta.ToolCalls {
 					if tc.ID != "" {
 						if toolCallMap[tc.ID] == nil {
 							toolCallMap[tc.ID] = &model.ToolCall{
@@ -315,21 +339,27 @@ func (c *Chat) do(req model.CreateChatCompletionRequest, w func(data []byte) err
 		return nil, err
 	}
 	toolCallMap := make(map[string]*model.ToolCall)
-	if len(resp.Choices) > 0 {
-		if resp.Choices[0].Message.Role == model.ChatMessageRoleAssistant && resp.Choices[0].Message.Content.StringValue != nil {
-			err = w(json.Bytes(*resp.Choices[0].Message.Content.StringValue))
-			if err != nil {
-				return nil, err
+	for _, rcv := range resp.Choices {
+		if c.cnf.raw {
+			s, _ := json.Marshal(rcv)
+			w(s)
+		}
+		if rcv.Message.Role == model.ChatMessageRoleAssistant && rcv.Message.Content.StringValue != nil {
+			if !c.cnf.raw {
+				err = w(json.Bytes(*rcv.Message.Content.StringValue))
+				if err != nil {
+					return nil, err
+				}
 			}
 			c.history.Store(&model.ChatCompletionMessage{
-				Role: resp.Choices[0].Message.Role,
+				Role: rcv.Message.Role,
 				Content: &model.ChatCompletionMessageContent{
-					StringValue: volcengine.String(*resp.Choices[0].Message.Content.StringValue),
+					StringValue: volcengine.String(*rcv.Message.Content.StringValue),
 				},
 			})
 		}
-		if len(resp.Choices[0].Message.ToolCalls) > 0 {
-			for _, tc := range resp.Choices[0].Message.ToolCalls {
+		if len(rcv.Message.ToolCalls) > 0 {
+			for _, tc := range rcv.Message.ToolCalls {
 				if tc.ID != "" {
 					if toolCallMap[tc.ID] == nil {
 						toolCallMap[tc.ID] = &model.ToolCall{

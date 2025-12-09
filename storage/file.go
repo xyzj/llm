@@ -53,6 +53,11 @@ func (s *FileStorage) Clear() error {
 	return nil
 }
 
+// Delete removes the conversation history for the specified chat ID from the database.
+func (s *FileStorage) Delete(chatid string) error {
+	return s.db.Delete(chatid)
+}
+
 // Load retrieves the conversation history for the specified chat ID from the database.
 // The method currently has a bug - it loads ALL conversations instead of filtering by chatid.
 // This should be fixed to only load the specific chat's history.

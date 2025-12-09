@@ -142,6 +142,21 @@ func (cm *ChatsManager) History(id string) []*model.ChatCompletionMessage {
 	return his
 }
 
+// DeleteChat removes a chat session and its history from the manager.
+// If the chat session doesn't exist, the method performs no action.
+//
+// Parameters:
+//   - id: Unique identifier of the chat session to delete
+func (cm *ChatsManager) DeleteChat(id string) {
+	keyid := crypto.GetSHA1(id)
+	ch, ok := cm.chats.Load(keyid)
+	if ok {
+		ch.Clear()
+	}
+	cm.cnf.dataStorage.Delete(keyid)
+	cm.chats.Delete(keyid)
+}
+
 // Chat processes a message in the specified chat session and handles any resulting tool calls.
 // This is the main method for interacting with AI models through the ChatsManager.
 //
@@ -180,7 +195,7 @@ func (cm *ChatsManager) Chat(id, message string, w func(data []byte) error, sysm
 		if len(his) > 0 {
 			ch.SetHistory(his)
 		}
-		cm.chats.Store(id, ch)
+		cm.chats.Store(keyid, ch)
 	}
 	var sysmsg []*model.ChatCompletionMessage
 	if len(sysmessage) > 0 {
@@ -198,7 +213,8 @@ func (cm *ChatsManager) Chat(id, message string, w func(data []byte) error, sysm
 	toolcall, err := ch.Chat(message,
 		chat.WithTools(cm.mcpCli.Tools()),
 		chat.WithWriteFunc(w),
-		chat.WithStream(cm.mcpCli.ToolCount() == 0), // enable streaming if tools are not available
+		chat.WithStream(true), // enable streaming if tools are not available
+		chat.WithRawData(cm.cnf.raw),
 		chat.WithRoleSystem(sysmsg...),
 	)
 	if err != nil {
@@ -240,6 +256,7 @@ func (cm *ChatsManager) Chat(id, message string, w func(data []byte) error, sysm
 			_, err = ch.Chat("",
 				chat.WithToolCalled(msgs),
 				chat.WithStream(true),
+				chat.WithRawData(cm.cnf.raw),
 				chat.WithWriteFunc(w),
 			)
 			if err != nil {

@@ -42,6 +42,14 @@ func (s *MemoryStorage) Clear() error {
 	return nil
 }
 
+// Delete removes the conversation history for the specified chat ID from memory.
+func (s *MemoryStorage) Delete(chatid string) error {
+	s.locker.Lock()
+	defer s.locker.Unlock()
+	delete(s.data, chatid)
+	return nil
+}
+
 // Store saves a conversation history for the specified chat ID.
 // The operation replaces any existing history for the given chat ID.
 // This method is thread-safe and acquires a write lock during operation.

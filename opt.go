@@ -23,10 +23,17 @@ type (
 		modelName    string          // Name of the AI model to use for chat completions
 		apiKey       string          // API key for authenticating with the LLM service
 		maxHistory   int             // Maximum number of messages to retain in chat history
+		raw          bool            // Whether to output raw response data
 	}
 	// Opts is a function type for configuring ChatsManager options.
 	Opts func(opt *Opt)
 )
+
+func WithRawOutput(raw bool) Opts {
+	return func(opt *Opt) {
+		opt.raw = raw
+	}
+}
 
 // WithMaxHistory sets the maximum number of messages to keep in each chat's history.
 // When this limit is exceeded, older messages are automatically removed to prevent

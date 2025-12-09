@@ -41,4 +41,7 @@ type Storage interface {
 	// Clear removes all stored conversation histories from the storage backend.
 	// This operation is irreversible and should be used with caution.
 	Clear() error
+
+	// Delete removes the conversation history for the specified chat ID.
+	Delete(chatid string) error
 }
