@@ -9,7 +9,6 @@ package mcpcli
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -25,6 +24,7 @@ import (
 type (
 	Opt struct {
 		timeout time.Duration
+		header  map[string]string
 	}
 	Opts func(opt *Opt)
 )
@@ -32,6 +32,12 @@ type (
 func WithTimeout(t time.Duration) Opts {
 	return func(opt *Opt) {
 		opt.timeout = t
+	}
+}
+
+func WithHeader(m map[string]string) Opts {
+	return func(opt *Opt) {
+		opt.header = m
 	}
 }
 
@@ -128,6 +134,7 @@ func (m *McpClient) Call(tc *model.ToolCall, opts ...Opts) (*model.ChatCompletio
 	}
 	co := Opt{
 		timeout: 60 * time.Second,
+		header:  map[string]string{},
 	}
 	for _, o := range opts {
 		o(&co)
@@ -135,22 +142,27 @@ func (m *McpClient) Call(tc *model.ToolCall, opts ...Opts) (*model.ChatCompletio
 	var arg = make(map[string]any)
 	err := json.UnmarshalFromString(tc.Function.Arguments, &arg)
 	if err != nil {
-		return nil, err
+		return &model.ChatCompletionMessage{
+			Role:       model.ChatMessageRoleTool,
+			Content:    &model.ChatCompletionMessageContent{StringValue: volcengine.String(checkCallToolResult(nil, err))},
+			ToolCallID: tc.ID,
+		}, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), co.timeout)
 	defer cancel()
 	request := mcp.CallToolRequest{}
+	for k, v := range co.header {
+		request.Header.Set(k, v)
+	}
 	request.Params.Name = tc.Function.Name
 	request.Params.Arguments = arg
 	result, err := m.clis[m.idx[tc.Function.Name]].cli.CallTool(ctx, request)
-	if err != nil {
-		return nil, err
-	}
+	s := checkCallToolResult(result, err)
 	return &model.ChatCompletionMessage{
 		Role:       model.ChatMessageRoleTool,
-		Content:    &model.ChatCompletionMessageContent{StringValue: volcengine.String(fmt.Sprint(result.Content))},
+		Content:    &model.ChatCompletionMessageContent{StringValue: volcengine.String(s)},
 		ToolCallID: tc.ID,
-	}, nil
+	}, err
 }
 
 // Tools returns all available tools from connected MCP servers.
@@ -285,4 +297,20 @@ func (m *McpClient) loadMCPTools(mcpUri string) ([]*model.Tool, error) {
 		m.tools.Store(vt)
 	}
 	return m.tools.Slice(), nil
+}
+
+func checkCallToolResult(result *mcp.CallToolResult, err error) string {
+	if err != nil {
+		result = &mcp.CallToolResult{
+			IsError: true,
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: err.Error(),
+				},
+			},
+		}
+	}
+	s, _ := json.MarshalToString(result)
+	return s
 }

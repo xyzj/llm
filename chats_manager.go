@@ -177,7 +177,7 @@ func (cm *ChatsManager) DeleteChat(id string) {
 //   - Errors are logged but don't propagate to prevent cascading failures
 //   - Failed tool calls are logged and skipped, allowing conversation to continue
 //   - Chat session remains valid even if individual operations fail
-func (cm *ChatsManager) Chat(id, message string, w func(data []byte) error, sysmessage ...string) {
+func (cm *ChatsManager) Chat(id, message string, sysmessage []string, w func(data []byte) error, calltoolopts ...mcpcli.Opts) {
 	keyid := crypto.GetSHA1(id)
 	var ok bool
 	var ch *chat.Chat
@@ -238,10 +238,10 @@ func (cm *ChatsManager) Chat(id, message string, w func(data []byte) error, sysm
 		}, "recv tool msg", nil)
 		for _, v := range toolcall {
 			wg.Go(func() {
-				msg, err := cm.mcpCli.Call(v, mcpcli.WithTimeout(60*time.Second))
+				msg, err := cm.mcpCli.Call(v, calltoolopts...)
 				if err != nil {
 					cm.cnf.logg.Error(fmt.Sprintf("mcp call %s error: %v", v.Function.Name, err))
-					return
+					// return
 				}
 				chanMsgs <- msg
 			})
