@@ -34,6 +34,7 @@ type (
 	// ChatOpt contains configuration options for creating a new Chat instance.
 	ChatOpt struct {
 		apikey     string // API key for VolcEngine ARK runtime
+		baseurl    string // Base URL for the ARK runtime API
 		maxhistory int    // Maximum number of messages to keep in history
 	}
 	// ChatOpts is a function type for configuring Chat creation options.
@@ -45,6 +46,13 @@ type (
 func WithMaxHistory(n int) ChatOpts {
 	return func(opt *ChatOpt) {
 		opt.maxhistory = n
+	}
+}
+
+// WithBaseURL sets the base URL for the VolcEngine ARK runtime API.
+func WithBaseURL(url string) ChatOpts {
+	return func(opt *ChatOpt) {
+		opt.baseurl = url
 	}
 }
 
@@ -186,6 +194,21 @@ func (c *Chat) Clear() {
 	c.history.Clear()
 }
 
+func (c *Chat) Reset(opts ...ChatOpts) {
+	c.locker.Lock()
+	defer c.locker.Unlock()
+	co := &ChatOpt{
+		maxhistory: 500,
+		apikey:     "your_api_key",
+	}
+	for _, o := range opts {
+		o(co)
+	}
+	c.apikey = co.apikey
+	c.history = *history.New(co.maxhistory)
+	c.cli = arkruntime.NewClientWithApiKey(co.apikey)
+}
+
 // Chat sends a message to the AI model and returns any tool calls made by the model.
 // This is the main method for interacting with the AI model in a conversational manner.
 //
@@ -204,11 +227,11 @@ func (c *Chat) Clear() {
 //   - Processes tool calls if any are made by the model
 //   - Manages conversation history including tool call results
 func (c *Chat) Chat(message string, opts ...Opts) (map[string]*model.ToolCall, error) {
+	c.locker.Lock()
 	defer func() {
 		c.lastMessage = time.Now()
 		c.locker.Unlock()
 	}()
-	c.locker.Lock()
 	co := &Opt{
 		stream:     false,
 		writeFunc:  func(data []byte) error { return nil },

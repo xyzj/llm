@@ -186,6 +186,7 @@ func (cm *ChatsManager) Chat(id, message string, sysmessage []string, w func(dat
 		ch = chat.New(keyid, cm.cnf.modelName,
 			chat.WithAPIKey(cm.cnf.apiKey),
 			chat.WithMaxHistory(cm.cnf.maxHistory),
+			chat.WithBaseURL(cm.cnf.baseURI),
 		)
 		// Load chat history from persistent storage
 		his, err := cm.cnf.dataStorage.Load(keyid)
@@ -229,6 +230,9 @@ func (cm *ChatsManager) Chat(id, message string, sysmessage []string, w func(dat
 		ctxdone, cancel := context.WithCancel(context.Background())
 		loopfunc.GoFunc(func(params ...any) {
 			for msg := range chanMsgs {
+				if msg == nil {
+					continue
+				}
 				if msg.Role == "shut me down" {
 					cancel()
 					return

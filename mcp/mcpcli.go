@@ -9,6 +9,7 @@ package mcpcli
 
 import (
 	"context"
+	"net/http"
 	"sync"
 	"time"
 
@@ -150,12 +151,16 @@ func (m *McpClient) Call(tc *model.ToolCall, opts ...Opts) (*model.ChatCompletio
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), co.timeout)
 	defer cancel()
-	request := mcp.CallToolRequest{}
+	request := mcp.CallToolRequest{
+		Header: http.Header{},
+		Params: mcp.CallToolParams{
+			Name:      tc.Function.Name,
+			Arguments: arg,
+		},
+	}
 	for k, v := range co.header {
 		request.Header.Set(k, v)
 	}
-	request.Params.Name = tc.Function.Name
-	request.Params.Arguments = arg
 	result, err := m.clis[m.idx[tc.Function.Name]].cli.CallTool(ctx, request)
 	s := checkCallToolResult(result, err)
 	return &model.ChatCompletionMessage{
@@ -301,14 +306,16 @@ func (m *McpClient) loadMCPTools(mcpUri string) ([]*model.Tool, error) {
 
 func checkCallToolResult(result *mcp.CallToolResult, err error) string {
 	if err != nil {
-		result = &mcp.CallToolResult{
-			IsError: true,
-			Content: []mcp.Content{
-				mcp.TextContent{
-					Type: "text",
-					Text: err.Error(),
+		if result == nil {
+			result = &mcp.CallToolResult{
+				IsError: true,
+				Content: []mcp.Content{
+					mcp.TextContent{
+						Type: "text",
+						Text: err.Error(),
+					},
 				},
-			},
+			}
 		}
 	}
 	s, _ := json.MarshalToString(result)
