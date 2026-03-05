@@ -10,6 +10,7 @@ package mcpcli
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,10 +27,16 @@ type (
 	Opt struct {
 		timeout time.Duration
 		header  map[string]string
+		reload  bool
 	}
 	Opts func(opt *Opt)
 )
 
+func WithReload(reload bool) Opts {
+	return func(opt *Opt) {
+		opt.reload = reload
+	}
+}
 func WithTimeout(t time.Duration) Opts {
 	return func(opt *Opt) {
 		opt.timeout = t
@@ -149,8 +156,8 @@ func (m *McpClient) Call(tc *model.ToolCall, opts ...Opts) (*model.ChatCompletio
 			ToolCallID: tc.ID,
 		}, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), co.timeout)
-	defer cancel()
+
+CALLTOOL:
 	request := mcp.CallToolRequest{
 		Header: http.Header{},
 		Params: mcp.CallToolParams{
@@ -161,7 +168,21 @@ func (m *McpClient) Call(tc *model.ToolCall, opts ...Opts) (*model.ChatCompletio
 	for k, v := range co.header {
 		request.Header.Set(k, v)
 	}
+	if co.reload {
+		uri := m.clis[m.idx[tc.Function.Name]].uri
+		m.loadMCPTools(uri)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), co.timeout)
 	result, err := m.clis[m.idx[tc.Function.Name]].cli.CallTool(ctx, request)
+	cancel()
+	if err != nil {
+		if !co.reload {
+			if strings.Contains(err.Error(), "Invalid session ID") {
+				co.reload = true
+				goto CALLTOOL
+			}
+		}
+	}
 	s := checkCallToolResult(result, err)
 	return &model.ChatCompletionMessage{
 		Role:       model.ChatMessageRoleTool,
@@ -253,31 +274,31 @@ func (m *McpClient) loadMCPTools(mcpUri string) ([]*model.Tool, error) {
 			uri: mcpUri,
 			cli: &client.Client{},
 		}
-		cli.cli, err = client.NewSSEMCPClient(mcpUri)
-		if err != nil {
-			return nil, err
-		}
-		err = cli.cli.Start(context.TODO())
-		if err != nil {
-			return nil, err
-		}
-		// Initialize MCP connection with protocol negotiation
-		initRequest := mcp.InitializeRequest{}
-		initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
-		initRequest.Params.ClientInfo = mcp.Implementation{
-			Name:    "aiagent-cli",
-			Version: "1.0.0",
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_, err = cli.cli.Initialize(ctx, initRequest)
-		if err != nil {
-			return nil, err
-		}
-		m.clis[clikey] = cli
 	}
-	// Discover available tools from the MCP server
+	cli.cli, err = client.NewSSEMCPClient(mcpUri)
+	if err != nil {
+		return nil, err
+	}
+	err = cli.cli.Start(context.TODO())
+	if err != nil {
+		return nil, err
+	}
+	// Initialize MCP connection with protocol negotiation
+	initRequest := mcp.InitializeRequest{}
+	initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initRequest.Params.ClientInfo = mcp.Implementation{
+		Name:    "aiagent-cli",
+		Version: "1.0.0",
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err = cli.cli.Initialize(ctx, initRequest)
+	if err != nil {
+		return nil, err
+	}
+	m.clis[clikey] = cli
+	// Discover available tools from the MCP server
+	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	toolsRequest := mcp.ListToolsRequest{}
 	listToolsResult, err := cli.cli.ListTools(ctx, toolsRequest)

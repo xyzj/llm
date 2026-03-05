@@ -147,7 +147,8 @@ func New(id, modelName string, opts ...ChatOpts) *Chat {
 		apikey:  co.apikey,
 		history: *history.New(co.maxhistory),
 		model:   modelName,
-		cli:     arkruntime.NewClientWithApiKey(co.apikey),
+		cli: arkruntime.NewClientWithApiKey(co.apikey,
+			arkruntime.WithBaseUrl(co.baseurl)),
 	}
 }
 
@@ -243,9 +244,6 @@ func (c *Chat) Chat(message string, opts ...Opts) (map[string]*model.ToolCall, e
 		o(co)
 	}
 	c.cnf = co
-	if len(co.roleSystem) > 0 {
-		c.history.StoreMany(co.roleSystem...)
-	}
 	if len(message) > 0 {
 		c.history.Store(&model.ChatCompletionMessage{
 			Role: model.ChatMessageRoleUser,
@@ -254,19 +252,23 @@ func (c *Chat) Chat(message string, opts ...Opts) (map[string]*model.ToolCall, e
 			},
 		})
 	}
-	msgs := make([]*model.ChatCompletionMessage, 0, c.history.Len()+len(co.toolcalled)+1)
+	msgs := make([]*model.ChatCompletionMessage, 0, c.history.Len()+len(co.toolcalled)+len(co.roleSystem)+1)
+	msgs = append(msgs, c.history.Slice()...)
+
 	req := model.CreateChatCompletionRequest{
 		Model:  co.model,
 		Stream: &co.stream,
 	}
 	if len(co.toolcalled) > 0 {
-		c.history.StoreMany(co.toolcalled...)
+		msgs = append(msgs, co.toolcalled...)
 	} else {
 		if len(co.tools) > 0 {
 			req.Tools = co.tools
 		}
 	}
-	msgs = append(msgs, c.history.Slice()...)
+	if len(co.roleSystem) > 0 {
+		msgs = append(msgs, co.roleSystem...)
+	}
 	req.Messages = msgs
 	if co.stream {
 		return c.doStream(req, co.writeFunc)
@@ -298,6 +300,7 @@ func (c *Chat) doStream(req model.CreateChatCompletionRequest, w func(data []byt
 	toolCallMap := make(map[string]*model.ToolCall)
 	var lastCallID string
 	var message = strings.Builder{}
+	var thinking bool
 	for !stream.IsFinished {
 		recv, err := stream.Recv()
 		if err != nil {
@@ -318,7 +321,16 @@ func (c *Chat) doStream(req model.CreateChatCompletionRequest, w func(data []byt
 						return nil, err
 					}
 				}
-				message.WriteString(rcv.Delta.Content)
+				if !thinking && strings.TrimSpace(rcv.Delta.Content) == "<think>" {
+					thinking = true
+					continue
+				} else if thinking && strings.TrimSpace(rcv.Delta.Content) == "</think>" {
+					thinking = false
+					continue
+				}
+				if !thinking {
+					message.WriteString(rcv.Delta.Content)
+				}
 			}
 			if len(rcv.Delta.ToolCalls) > 0 {
 				for _, tc := range rcv.Delta.ToolCalls {

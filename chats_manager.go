@@ -135,8 +135,9 @@ func (cm *ChatsManager) AddCustomTool(tool *model.Tool, f func(args *model.ToolC
 // Returns:
 //   - []*model.ChatCompletionMessage: Slice of messages in chronological order
 func (cm *ChatsManager) History(id string) []*model.ChatCompletionMessage {
+	keyid := crypto.GetSHA1(id)
 	var his []*model.ChatCompletionMessage
-	if ch, ok := cm.chats.Load(id); ok {
+	if ch, ok := cm.chats.Load(keyid); ok {
 		his = ch.History()
 	}
 	return his
